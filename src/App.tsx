@@ -1,158 +1,114 @@
 import "./styles.css";
+import { useMemo, useState } from "react";
+import { useAppState } from "./pages/useAppState";
+import { PatientPanel } from "./pages/components/PatientPanel";
+import { ToothCard } from "./pages/components/ToothCard";
+import { ConflictPanel } from "./pages/components/ConflictPanel";
+import { detectConflicts } from "./rules/conflicts";
+import { patientBillings, totalDebt } from "./rules/billing";
+import { yuan } from "./pages/format";
 
-const project = {
-  "id": "hxwl-04",
-  "port": 5104,
-  "title": "牙科根管治疗",
-  "subtitle": "按牙位组织根管步骤、工作长度与复诊计划",
-  "stack": "React + Vite + TypeScript + CSS",
-  "theme": [
-    "#0369a1",
-    "#7c3aed",
-    "#ea580c"
-  ],
-  "domain": "牙体牙髓",
-  "users": [
-    "牙科医生",
-    "助理",
-    "前台复诊协调员"
-  ],
-  "metrics": [
-    "待复诊",
-    "已充填",
-    "平均工作长度",
-    "封药病例"
-  ],
-  "filters": [
-    "开髓",
-    "测长",
-    "封药",
-    "充填"
-  ],
-  "fields": [
-    "牙位",
-    "开髓",
-    "测长",
-    "根管预备",
-    "冲洗",
-    "封药",
-    "主尖锉号"
-  ],
-  "records": [
-    [
-      "#36",
-      "慢性根尖周炎",
-      "封药",
-      "MB 19.5mm，主尖锉#30"
-    ],
-    [
-      "#11",
-      "外伤后变色",
-      "充填",
-      "单根管，冷侧压完成"
-    ],
-    [
-      "#46",
-      "急性牙髓炎",
-      "测长",
-      "近中双根管需复诊"
-    ]
-  ]
-};
-
-const statusColors = ["status-ok", "status-watch", "status-danger"];
-
-function MetricCard({ label, value, index }: { label: string; value: string; index: number }) {
+function MetricCard({ label, value, tone }: { label: string; value: string; tone: "ok" | "watch" | "danger" }) {
   return (
-    <article className="metric-card">
+    <article className={`metric-card tone-${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
-      <i className={statusColors[index % statusColors.length]} />
+      <i className={`status-bar status-${tone}`} />
     </article>
   );
 }
 
 function App() {
-  const values = project.metrics.map((metric: string, index: number) => {
-    const base = [84, 12, 31, 7][index % 4];
-    return String(base + index * 3);
-  });
+  const { state, apply, reset } = useAppState();
+  const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
+
+  const billings = useMemo(() => patientBillings(state), [state]);
+  const conflicts = useMemo(() => detectConflicts(state.teeth), [state.teeth]);
+
+  const settledCount = state.teeth.filter((tooth) => tooth.status === "settled").length;
+  const pendingVisit = state.teeth.filter(
+    (tooth) => tooth.stage !== "充填" && !tooth.nextVisitDate
+  ).length;
+  const totalCharged = billings.reduce((sum, entry) => sum + entry.charged, 0);
+  const patientsInDebt = billings.filter((entry) => entry.debt > 0).length;
+
+  const visibleTeeth = state.teeth.filter(
+    (tooth) => !selectedPatient || tooth.patientId === selectedPatient
+  );
+
+  const patientName = (id: string) => state.patients.find((patient) => patient.id === id)?.name ?? "未知患者";
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">{project.id} · port {project.port}</p>
-          <h1>{project.title}</h1>
-          <p className="subtitle">{project.subtitle}</p>
+          <p className="eyebrow">hxwl-04 · 根管治疗耗材计费与欠费核销台</p>
+          <h1>牙科根管看板</h1>
+          <p className="subtitle">
+            按牙位登记耗材项目、单价、数量、自费/医保与本次费用；退费只冲销不改正项，结账即冻结，
+            更正保留旧值版本，欠费不清不排复诊。
+          </p>
         </div>
         <div className="stack-card">
-          <span>技术栈</span>
-          <strong>{project.stack}</strong>
+          <span>数据 / 规则 / 页面分层</span>
+          <strong>React + TypeScript + localStorage，无新增依赖</strong>
+          <button type="button" onClick={reset} className="reset-btn">
+            重置为演示数据
+          </button>
         </div>
       </section>
 
       <section className="metrics-grid">
-        {project.metrics.map((metric: string, index: number) => (
-          <MetricCard key={metric} label={metric} value={values[index]} index={index} />
-        ))}
+        <MetricCard label="在诊牙位" value={String(state.teeth.length - settledCount)} tone="watch" />
+        <MetricCard label="已结账冻结" value={String(settledCount)} tone="ok" />
+        <MetricCard label="待排复诊" value={String(pendingVisit)} tone="watch" />
+        <MetricCard label="患者欠费总额" value={yuan(totalDebt(state))} tone={patientsInDebt > 0 ? "danger" : "ok"} />
+        <MetricCard label="应收合计" value={yuan(totalCharged)} tone="ok" />
       </section>
 
       <section className="workspace">
-        <aside className="panel narrow">
-          <h2>角色</h2>
-          <div className="chips">
-            {project.users.map((user: string) => (
-              <span key={user}>{user}</span>
-            ))}
-          </div>
-          <h2>筛选</h2>
-          <div className="chips muted">
-            {project.filters.map((filter: string) => (
-              <button key={filter}>{filter}</button>
-            ))}
-          </div>
-        </aside>
+        <PatientPanel
+          state={state}
+          selectedId={selectedPatient}
+          onSelect={(id) => setSelectedPatient((current) => (current === id ? null : id))}
+          onApply={apply}
+        />
 
-        <section className="panel">
+        <section className="panel teeth-panel">
           <div className="section-heading">
             <div>
-              <p>{project.domain}</p>
-              <h2>记录字段</h2>
+              <p>牙位耗材计费</p>
+              <h2>
+                {selectedPatient ? `${patientName(selectedPatient)} 的牙位` : "全部牙位"}
+              </h2>
             </div>
-            <button className="primary-action">新增记录</button>
+            {selectedPatient && (
+              <button type="button" onClick={() => setSelectedPatient(null)}>
+                查看全部患者
+              </button>
+            )}
           </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
+          <div className="tooth-list">
+            {visibleTeeth.map((tooth) => (
+              <ToothCard
+                key={tooth.id}
+                state={state}
+                tooth={tooth}
+                patientName={patientName(tooth.patientId)}
+                onApply={apply}
+              />
             ))}
+            {visibleTeeth.length === 0 && <p className="empty-banner">该患者暂无牙位记录。</p>}
           </div>
         </section>
       </section>
 
-      <section className="records panel">
-        <div className="section-heading">
-          <div>
-            <p>示例数据</p>
-            <h2>近期记录</h2>
-          </div>
-          <button>导出摘要</button>
-        </div>
-        <div className="record-list">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")} className="record-card">
-              <div className="record-index">{String(index + 1).padStart(2, "0")}</div>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+      <ConflictPanel conflicts={conflicts} />
+
+      <footer className="app-footer">
+        数据层（localStorage 仓储）· 规则层（登记校验 / 欠费核销 / 冲销 / 冻结更正版本 / 冲突检测）·
+        页面层（React 组件），刷新后数据一致。
+      </footer>
     </main>
   );
 }
